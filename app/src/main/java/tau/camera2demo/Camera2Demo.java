@@ -3,13 +3,19 @@ package tau.camera2demo;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.zip.Inflater;
 
 import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.ImageFormat;
+import android.graphics.PixelFormat;
+import android.graphics.Point;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -28,17 +34,24 @@ import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.util.Log;
 import android.util.Size;
+import android.view.LayoutInflater;
 import android.view.Surface;
+import android.view.SurfaceView;
 import android.view.TextureView;
+import android.view.View;
+import android.widget.RelativeLayout;
 
 public class Camera2Demo extends Activity implements
         TextureView.SurfaceTextureListener {
 
     private CameraDevice mCamera;
-    private String mCameraID = "1";
+    private String mCameraID = "0";
 
-    private TextureView mPreviewView;
+    private AutoFitTextureView mPreviewView;
+    private AutoFitSurfaceView mPreviewSurface;
+    //private TextureView mDrawView;
     private Size mPreviewSize;
+    private Size mImageSize;
     private CaptureRequest.Builder mPreviewBuilder;
     private ImageReader mImageReader;
 
@@ -55,6 +68,7 @@ public class Camera2Demo extends Activity implements
 
     //surface
     private Surface surface;
+    //private Surface drawsurface;
     private static final int REQUEST_CAMERA_PERMISSION = 1;
 
     @Override
@@ -65,6 +79,16 @@ public class Camera2Demo extends Activity implements
         initView();
         initLooper();
 
+        //RelativeLayout layout = (RelativeLayout)findViewById(R.id.relative);
+        mPreviewSurface = (AutoFitSurfaceView)findViewById(R.id.drawview);
+        mPreviewSurface.setZOrderOnTop(true);
+        mPreviewSurface.getHolder().setFormat(PixelFormat.RGBA_8888);
+        //RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT);
+        //params.addRule(RelativeLayout.ALIGN_PARENT_LEFT, RelativeLayout.TRUE);
+        //params.addRule(RelativeLayout.ALIGN_PARENT_TOP, RelativeLayout.TRUE);
+        //params.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM, RelativeLayout.TRUE);
+        //params.addRule(RelativeLayout.ALIGN_PARENT_RIGHT, RelativeLayout.TRUE);
+        //layout.addView(mPreviewSurface, params);
     }
 
     // subroutine to run camera
@@ -78,8 +102,10 @@ public class Camera2Demo extends Activity implements
      *  step 2: using TextureView to display PREVIEW
      */
     private void initView() {
-        mPreviewView = (TextureView) findViewById(R.id.textureview);
+        mPreviewView = (AutoFitTextureView) findViewById(R.id.textureview);
         mPreviewView.setSurfaceTextureListener(this);
+        //mDrawView = (TextureView) findViewById(R.id.drawtexture);
+        //mDrawView.setSurfaceTextureListener(this);
     }
 
     private void requestCameraPermission() {
@@ -108,6 +134,72 @@ public class Camera2Demo extends Activity implements
         }
     }
 
+
+    /**
+     * Given {@code choices} of {@code Size}s supported by a camera, choose the smallest one that
+     * is at least as large as the respective texture view size, and that is at most as large as the
+     * respective max size, and whose aspect ratio matches with the specified value. If such size
+     * doesn't exist, choose the largest one that is at most as large as the respective max size,
+     * and whose aspect ratio matches with the specified value.
+     *
+     * @param choices           The list of sizes that the camera supports for the intended output
+     *                          class
+     * @param textureViewWidth  The width of the texture view relative to sensor coordinate
+     * @param textureViewHeight The height of the texture view relative to sensor coordinate
+     * @param maxWidth          The maximum width that can be chosen
+     * @param maxHeight         The maximum height that can be chosen
+     * @param aspectRatio       The aspect ratio
+     * @return The optimal {@code Size}, or an arbitrary one if none were big enough
+     */
+    private static Size chooseOptimalSize(Size[] choices, int textureViewWidth,
+                                          int textureViewHeight, int maxWidth, int maxHeight, Size aspectRatio) {
+
+        // Collect the supported resolutions that are at least as big as the preview Surface
+        List<Size> bigEnough = new ArrayList<>();
+        // Collect the supported resolutions that are smaller than the preview Surface
+        List<Size> notBigEnough = new ArrayList<>();
+        int w = aspectRatio.getWidth();
+        int h = aspectRatio.getHeight();
+        for (Size option : choices) {
+            if (option.getWidth() <= maxWidth && option.getHeight() <= maxHeight &&
+                    option.getHeight() == option.getWidth() * h / w) {
+                if (option.getWidth() >= textureViewWidth &&
+                        option.getHeight() >= textureViewHeight) {
+                    bigEnough.add(option);
+                } else {
+                    notBigEnough.add(option);
+                }
+            }
+        }
+
+        // Pick the smallest of those big enough. If there is no one big enough, pick the
+        // largest of those not big enough.
+        if (bigEnough.size() > 0) {
+            return Collections.min(bigEnough, new CompareSizesByArea());
+        } else if (notBigEnough.size() > 0) {
+            return Collections.max(notBigEnough, new CompareSizesByArea());
+        } else {
+            Log.e(TAG, "Couldn't find any suitable preview size");
+            return choices[0];
+        }
+    }
+
+
+    /**
+     * Compares two {@code Size}s based on their areas.
+     */
+    static class CompareSizesByArea implements Comparator<Size> {
+
+        @Override
+        public int compare(Size lhs, Size rhs) {
+            // We cast here to ensure the multiplications won't overflow
+            return Long.signum((long) lhs.getWidth() * lhs.getHeight() -
+                    (long) rhs.getWidth() * rhs.getHeight());
+        }
+
+    }
+
+
     /*
      *  step 3: to set features of camera and open camera
      */
@@ -119,11 +211,101 @@ public class Camera2Demo extends Activity implements
             CameraManager cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
             // to get features of the selected camera
             CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(mCameraID);
+
+            // We don't use a front facing camera in this sample.
+            Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+            if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) {
+                Log.e("", "camera facing error");
+            }
+
             // to get stream configuration from features
             StreamConfigurationMap map = characteristics
                     .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+
+            // For still image captures, we use the largest available size.
+            Size largest = Collections.max(
+                    Arrays.asList(map.getOutputSizes(ImageFormat.JPEG)),
+                    new CompareSizesByArea());
+
+            // Find out if we need to swap dimension to get the preview size relative to sensor
+            // coordinate.
+            int displayRotation = this.getWindowManager().getDefaultDisplay().getRotation();
+            //noinspection ConstantConditions
+            int mSensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+            boolean swappedDimensions = false;
+            switch (displayRotation) {
+                case Surface.ROTATION_0:
+                case Surface.ROTATION_180:
+                    if (mSensorOrientation == 90 || mSensorOrientation == 270) {
+                        swappedDimensions = true;
+                    }
+                    break;
+                case Surface.ROTATION_90:
+                case Surface.ROTATION_270:
+                    if (mSensorOrientation == 0 || mSensorOrientation == 180) {
+                        swappedDimensions = true;
+                    }
+                    break;
+                default:
+                    Log.e(TAG, "Display rotation is invalid: " + displayRotation);
+            }
+
+            //Point displaySize = new Point();
+            //this.getWindowManager().getDefaultDisplay().getSize(displaySize);
+            int rotatedPreviewWidth = width;
+            int rotatedPreviewHeight = height;
+            int maxPreviewWidth = mPreviewView.getWidth();
+            int maxPreviewHeight = mPreviewView.getHeight();
+
+            if (swappedDimensions) {
+                rotatedPreviewWidth = height;
+                rotatedPreviewHeight = width;
+                maxPreviewWidth = mPreviewView.getHeight();
+                maxPreviewHeight = mPreviewView.getWidth();
+            }
+
+            int MAX_PREVIEW_WIDTH = 1920;
+            int MAX_PREVIEW_HEIGHT = 1080;
+            int MAX_IMAGE_WIDTH = 320;
+            int MAX_IMAGE_HEIGHT = 240;
+
+
+            if (maxPreviewWidth > MAX_PREVIEW_WIDTH) {
+                maxPreviewWidth = MAX_PREVIEW_WIDTH;
+            }
+
+            if (maxPreviewHeight > MAX_PREVIEW_HEIGHT) {
+                maxPreviewHeight = MAX_PREVIEW_HEIGHT;
+            }
+
+
             // to get the size that the camera supports
-            mPreviewSize = map.getOutputSizes(SurfaceTexture.class)[0];
+            //mPreviewSize = map.getOutputSizes(SurfaceTexture.class)[0];
+
+            // Danger, W.R.! Attempting to use too large a preview size could  exceed the camera
+            // bus' bandwidth limitation, resulting in gorgeous previews but the storage of
+            // garbage capture data.
+            mPreviewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class),
+                    rotatedPreviewWidth, rotatedPreviewHeight, maxPreviewWidth,
+                    maxPreviewHeight, largest);
+
+            mImageSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class),
+                    rotatedPreviewWidth, rotatedPreviewHeight, MAX_IMAGE_WIDTH,
+                    MAX_IMAGE_HEIGHT, largest);
+
+            // We fit the aspect ratio of TextureView to the size of preview we picked.
+            int orientation = getResources().getConfiguration().orientation;
+            if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
+                mPreviewView.setAspectRatio(
+                        mPreviewSize.getWidth(), mPreviewSize.getHeight());
+                mPreviewSurface.setAspectRatio(
+                        mPreviewSize.getWidth(), mPreviewSize.getHeight());
+            } else {
+                mPreviewView.setAspectRatio(
+                        mPreviewSize.getHeight(), mPreviewSize.getWidth());
+                mPreviewSurface.setAspectRatio(
+                        mPreviewSize.getHeight(), mPreviewSize.getWidth());
+            }
 
             // open camera
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -199,18 +381,23 @@ public class Camera2Demo extends Activity implements
             e.printStackTrace();
         }
 
-        // to set the format of captured images and the maximum number of images that can be accessed in mImageReader
-        mImageReader = ImageReader.newInstance(mImageWidth, mImageHeight, ImageFormat.YUV_420_888, 2);
+        //SurfaceTexture drawtexture = mDrawView.getSurfaceTexture();
+        //drawtexture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
+        //drawsurface = new Surface(drawtexture);
 
-        mImageReader.setOnImageAvailableListener(mOnImageAvailableListener,mHandler);
+        // to set the format of captured images and the maximum number of images that can be accessed in mImageReader
+        mImageReader = ImageReader.newInstance(mImageSize.getWidth(), mImageSize.getHeight(), ImageFormat.YUV_420_888, 2);
+
+        mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mHandler);
 
         // the first added target surface is for camera PREVIEW display
         // the second added target mImageReader.getSurface() is for ImageReader Callback where we can access EACH frame
-        //mPreviewBuilder.addTarget(surface);
+        mPreviewBuilder.addTarget(surface);
         mPreviewBuilder.addTarget(mImageReader.getSurface());
 
         //output Surface
         List<Surface> outputSurfaces = new ArrayList<>();
+        outputSurfaces.add(surface);
         outputSurfaces.add(mImageReader.getSurface());
 
         /*camera.createCaptureSession(
@@ -264,32 +451,26 @@ public class Camera2Demo extends Activity implements
                 return;
             }
 
-            // HERE to call jni methods
-            //grayscale output
-//            JNIUtils.GrayscaleDisplay(image.getWidth(), image.getHeight(), image.getPlanes()[0].getRowStride(), image.getPlanes()[0].getBuffer(), surface);
+            if (image.getFormat() == ImageFormat.YUV_420_888) {
+                int[] strides = {0, 0, 0};
+                // HERE to call jni method
+                Image.Plane planes[] = image.getPlanes();
 
-            //RGBA output
-            Image.Plane Y_plane = image.getPlanes()[0];
-            int Y_rowStride = Y_plane.getRowStride();
-            Image.Plane U_plane = image.getPlanes()[1];
-            int UV_rowStride = U_plane.getRowStride();  //in particular, uPlane.getRowStride() == vPlane.getRowStride()
-            Image.Plane V_plane = image.getPlanes()[2];
-            JNIUtils.RGBADisplay(image.getWidth(), image.getHeight(), Y_rowStride, Y_plane.getBuffer(), UV_rowStride, U_plane.getBuffer(), V_plane.getBuffer(), surface);
-
-//            JNIUtils.RGBADisplay2(image.getWidth(), image.getHeight(), Y_rowStride, Y_plane.getBuffer(), U_plane.getBuffer(), V_plane.getBuffer(), surface);
-
-//            Log.d(TAG, "Y plane pixel stride: " + Y_plane.getPixelStride());
-//            Log.d(TAG, "U plane pixel stride: " + U_plane.getPixelStride());
-//            Log.d(TAG, "V plane pixel stride: " + V_plane.getPixelStride());
-
-//            Log.d(TAG, "Y plane length: " + Y_plane.getBuffer().remaining());
-//            Log.d(TAG, "U plane length: " + U_plane.getBuffer().remaining());
-//            Log.d(TAG, "V plane length: " + V_plane.getBuffer().remaining());
-
-//            Log.d(TAG, "Y plane rowStride: " + Y_rowStride);
-//            Log.d(TAG, "U plane rowStride: " + U_rowStride);
-//            Log.d(TAG, "V plane rowStride: " + V_rowStride);
-
+                boolean forground = JNIUtils.ForgroundDetect(
+                        planes[0].getBuffer(),
+                        planes[1].getBuffer(),
+                        planes[2].getBuffer(),
+                        image.getWidth(),
+                        image.getHeight(),
+                        planes[0].getRowStride(),
+                        planes[1].getRowStride(),
+                        planes[1].getPixelStride(),
+                        mPreviewSurface.getHolder().getSurface(),
+                        256, 256, 0.5f, true);
+                Log.e("", "take picture " + forground);
+            } else {
+                Log.e("", "can't support image format " + image.getFormat());
+            }
 
             image.close();
         }

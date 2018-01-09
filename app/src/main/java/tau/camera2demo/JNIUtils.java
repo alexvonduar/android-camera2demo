@@ -12,10 +12,24 @@ public class JNIUtils {
 
     // Load native library.
     static {
+        System.loadLibrary("opencv_objdetect");
+        System.loadLibrary("opencv_core");
+        System.loadLibrary("opencv_video");
+        System.loadLibrary("opencv_imgproc");
         System.loadLibrary("native-lib");
     }
 
-    public static native void GrayscaleDisplay(int srcWidth, int srcHeight, int rowStride, ByteBuffer srcBuffer, Surface surface);
-    public static native void RGBADisplay(int srcWidth, int srcHeight, int Y_rowStride, ByteBuffer Y_Buffer, int UV_rowStride, ByteBuffer U_Buffer, ByteBuffer V_Buffer, Surface surface);
-    public static native void RGBADisplay2(int srcWidth, int srcHeight, int Y_rowStride, ByteBuffer Y_Buffer, ByteBuffer U_Buffer, ByteBuffer V_Buffer, Surface surface);
+    public static native boolean ForgroundDetect(ByteBuffer y,
+                                              ByteBuffer u,
+                                              ByteBuffer v,
+                                              int width,
+                                              int height,
+                                              int y_stride,
+                                              int uv_stride,
+                                              int uv_pstride,
+                                              Surface surface,
+                                              int boarder_x,
+                                              int boarder_y,
+                                              float threshold,
+                                              boolean debug);
 }

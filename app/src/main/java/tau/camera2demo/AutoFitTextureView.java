@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.example.android.camera2basic;
+package tau.camera2demo;
 
 import android.content.Context;
 import android.util.AttributeSet;

@@ -32,6 +32,21 @@ find_library( # Sets the name of the path variable.
               # you want CMake to locate.
               log )
 
+# configure import libs
+set(opencv_DIR ${CMAKE_SOURCE_DIR}/../opencv)
+
+add_library( objdetect SHARED IMPORTED )
+set_target_properties( objdetect PROPERTIES IMPORTED_LOCATION ${opencv_DIR}/sdk/native/libs/${ANDROID_ABI}/libopencv_objdetect.so)
+
+add_library( imgproc SHARED IMPORTED )
+set_target_properties( imgproc PROPERTIES IMPORTED_LOCATION ${opencv_DIR}/sdk/native/libs/${ANDROID_ABI}/libopencv_imgproc.so )
+
+add_library( video SHARED IMPORTED )
+set_target_properties( video PROPERTIES IMPORTED_LOCATION ${opencv_DIR}/sdk/native/libs/${ANDROID_ABI}/libopencv_video.so )
+
+add_library( cvcore SHARED IMPORTED )
+set_target_properties( cvcore PROPERTIES IMPORTED_LOCATION ${opencv_DIR}/sdk/native/libs/${ANDROID_ABI}/libopencv_core.so )
+
 # Specifies libraries CMake should link to your target library. You
 # can link multiple libraries, such as libraries you define in this
 # build script, prebuilt third-party libraries, or system libraries.
@@ -40,6 +55,17 @@ target_link_libraries( # Specifies the target library.
                        native-lib
                        -landroid
 
+                       objdetect
+
+                       imgproc
+
+                       video
+
+                       cvcore
+
                        # Links the target library to the log library
                        # included in the NDK.
                        ${log-lib} )
+
+target_include_directories( native-lib PRIVATE
+                           ${opencv_DIR}/sdk/native/jni/include)
