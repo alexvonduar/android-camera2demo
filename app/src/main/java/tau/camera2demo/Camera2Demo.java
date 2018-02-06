@@ -451,7 +451,7 @@ public class Camera2Demo extends Activity implements
                 return;
             }
 
-            if (image.getFormat() == ImageFormat.YUV_420_888) {
+            if (false && image.getFormat() == ImageFormat.YUV_420_888) {
                 int[] strides = {0, 0, 0};
                 // HERE to call jni method
                 Image.Plane planes[] = image.getPlanes();

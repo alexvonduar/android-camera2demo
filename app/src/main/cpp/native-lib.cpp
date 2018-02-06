@@ -15,22 +15,24 @@
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "Camera2Demo", __VA_ARGS__)
 
-bool bgfg_detect(uint8_t * y,
-                 uint8_t * u,
-                 uint8_t * v,
-                 const int& width,
-                 const int& height,
-                 const int& y_stride,
-                 const int& uv_stride,
-                 const int& uv_pstride,
-                 uint8_t * dst,
-                 const int& dst_width,
-                 const int& dst_height,
-                 const int& dst_stride,
-                 const int& boarder_x,
-                 const int& boarder_y,
-                 const float& threshold,
-                 const bool& debug);
+bool bgfg_detect(uint8_t *y,
+                 uint8_t *u,
+                 uint8_t *v,
+                 const int &width,
+                 const int &height,
+                 const int &y_stride,
+                 const int &uv_stride,
+                 const int &uv_pstride,
+                 uint8_t *dst,
+                 const int &dst_width,
+                 const int &dst_height,
+                 const int &dst_stride,
+                 const int &window_x,
+                 const int &window_y,
+                 const int &window_w,
+                 const int &window_h,
+                 const float &threshold,
+                 const bool &debug);
 
 //convert Y Plane from YUV_420_888 to RGBA and display
 extern "C" {
@@ -46,14 +48,16 @@ JNIEXPORT jboolean JNICALL Java_tau_camera2demo_JNIUtils_ForgroundDetect(
         jint uv_stride,
         jint uv_pstride,
         jobject surface,
-        jint boarder_x,
-        jint boarder_y,
+        jint window_x,
+        jint window_y,
+        jint window_w,
+        jint window_h,
         jfloat threshold,
         jboolean debug) {
 
-    uint8_t * y = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(yBuffer));
-    uint8_t * u = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(uBuffer));
-    uint8_t * v = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(vBuffer));
+    uint8_t *y = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(yBuffer));
+    uint8_t *u = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(uBuffer));
+    uint8_t *v = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(vBuffer));
 
     ANativeWindow *window = NULL;
     ANativeWindow_Buffer buffer;
@@ -74,9 +78,11 @@ JNIEXPORT jboolean JNICALL Java_tau_camera2demo_JNIUtils_ForgroundDetect(
     //to display grayscale, first convert the Y plane from YUV_420_888 to RGBA
     //ANativeWindow_Buffer buffer;
     LOGE("surface[%dx%d] src[%dx%d]\n", buffer.width, buffer.height, width, height);
-    uint8_t * outPtr = reinterpret_cast<uint8_t *>(buffer.bits);
+    uint8_t *outPtr = reinterpret_cast<uint8_t *>(buffer.bits);
 
-    bool result = bgfg_detect(y, u, v, width, height, y_stride, uv_stride, uv_pstride, outPtr, buffer.width, buffer.height, buffer.stride, boarder_x, boarder_y, threshold, debug);
+    bool result = bgfg_detect(y, u, v, width, height, y_stride, uv_stride, uv_pstride, outPtr,
+                              buffer.width, buffer.height, buffer.stride, window_x, window_y,
+                              window_w, window_h, threshold, debug);
 
     if (debug) {
         ANativeWindow_unlockAndPost(window);
@@ -92,23 +98,24 @@ static cv::Ptr<cv::BackgroundSubtractor> bg_model = cv::createBackgroundSubtract
 static bool skip = false;
 static bool result = false;
 
-bool bgfg_detect(uint8_t * y,
-                 uint8_t * u,
-                 uint8_t * v,
-                 const int& width,
-                 const int& height,
-                 const int& y_stride,
-                 const int& uv_stride,
-                 const int& uv_pstride,
-                 uint8_t * dst,
-                 const int& dst_width,
-                 const int& dst_height,
-                 const int& dst_stride,
-                 const int& boarder_x,
-                 const int& boarder_y,
-                 const float& threshold,
-                 const bool& debug)
-{
+bool bgfg_detect(uint8_t *y,
+                 uint8_t *u,
+                 uint8_t *v,
+                 const int &width,
+                 const int &height,
+                 const int &y_stride,
+                 const int &uv_stride,
+                 const int &uv_pstride,
+                 uint8_t *dst,
+                 const int &dst_width,
+                 const int &dst_height,
+                 const int &dst_stride,
+                 const int &window_x,
+                 const int &window_y,
+                 const int &window_w,
+                 const int &window_h,
+                 const float &threshold,
+                 const bool &debug) {
     //if (bg_model == NULL) {
     //    bg_model = cv::createBackgroundSubtractorMOG2().dynamicCast<cv::BackgroundSubtractor>();
     //}
@@ -116,7 +123,7 @@ bool bgfg_detect(uint8_t * y,
     cv::Mat fgmask;//, fgimg;
 
     if (debug) {
-        LOGE("y %p u %p v %p %d %d %d %d", y, u, v, u - y, v - u, boarder_x, boarder_y);
+        LOGE("y %p u %p v %p %d %d %d %d", y, u, v, u - y, v - u, window_x, window_y);
         LOGE("%dx%d stride %d %d", width, height, y_stride, uv_stride);
     }
 
@@ -126,9 +133,6 @@ bool bgfg_detect(uint8_t * y,
     cv::Mat img0(height + height / 2, width, CV_8UC1, y);
     cv::Mat img;
     cv::cvtColor(img0, img, CV_YUV2BGR_NV21);
-
-    //float src_scale = (float)320.0 / (float)width;
-    float dst_scale = (float)width / (float)dst_height;
 
     if (skip) {
         skip = false;
@@ -151,42 +155,52 @@ bool bgfg_detect(uint8_t * y,
 
     //cv::Mat bgimg;
     //bg_model->getBackgroundImage(bgimg);
-
+    int num_total = 0;
+    int num_forground = 0;
     if (debug) {
         LOGE("fgmask %dx%d dst %dx%d[%d]", fgmask.size().width, fgmask.size().height, dst_width,
              dst_height, dst_stride);
-    }
-    int dst_bpp = 4;
+        //float src_scale = (float)320.0 / (float)width;
+        float dst_scale = (float) width / (float) dst_height;
 
-    int num_total = 0;
-    int num_forground = 0;
-    for (size_t y = 0; y < dst_height; y++)
-    {
-        uint8_t * dstPtr = dst + y * dst_stride * 4;
-        for (size_t x = 0; x < dst_width; x++)
-        {
 
-            if ((y > boarder_y && y < (dst_height - boarder_y)) && (x > boarder_x && x < (dst_width - boarder_x))) {
-                int _y = std::floor((dst_height - 1 - y) * dst_scale);
-                int _x = std::floor((dst_width - 1 - x) * dst_scale);
-                if (fgmask.at<uint8_t>(_x, _y)) {
-                    //if (y > 10 && y < 20) {
-                    //for grayscale output, just duplicate the Y channel into R, G, B channels
-                    *dstPtr++ = 255; //R
-                    *dstPtr++ = 0; //G
-                    *dstPtr++ = 0; //B
-                    *dstPtr++ = 200; // gamma for RGBA_8888
-                    //++rowPtr;
-                    num_forground += 1;
+        int dst_bpp = 4;
+
+        for (size_t y = 0; y < dst_height; y++) {
+            uint8_t *dstPtr = dst + y * dst_stride * 4;
+            for (size_t x = 0; x < dst_width; x++) {
+                if ((y > window_y && y < (dst_height - window_y)) &&
+                    (x > window_x && x < (dst_width - window_x))) {
+                    int _y = std::floor((dst_height - 1 - y) * dst_scale);
+                    int _x = std::floor((dst_width - 1 - x) * dst_scale);
+                    if (fgmask.at<uint8_t>(_x, _y)) {
+                        //if (y > 10 && y < 20) {
+                        //for grayscale output, just duplicate the Y channel into R, G, B channels
+                        *dstPtr++ = 255; //R
+                        *dstPtr++ = 0; //G
+                        *dstPtr++ = 0; //B
+                        *dstPtr++ = 200; // gamma for RGBA_8888
+                        //++rowPtr;
+                        num_forground += 1;
+                    } else {
+                        *dstPtr++ = 0; //R
+                        *dstPtr++ = 0; //G
+                        *dstPtr++ = 0; //B
+                        *dstPtr++ = 0; // gamma for RGBA_8888
+                    }
+                    num_total += 1;
                 } else {
-                    *dstPtr++ = 0; //R
-                    *dstPtr++ = 0; //G
-                    *dstPtr++ = 0; //B
-                    *dstPtr++ = 0; // gamma for RGBA_8888
+                    dstPtr += 4;
+                }
+            }
+        }
+    } else {
+        for (size_t y = window_y; y < (window_h + window_y); y++) {
+            for (size_t x = window_x; x < (window_w + window_x); x++) {
+                if (fgmask.at<uint8_t>(x, y)) {
+                    num_forground += 1;
                 }
                 num_total += 1;
-            } else {
-                dstPtr += 4;
             }
         }
     }
